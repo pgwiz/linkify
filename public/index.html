@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Linkify – Key Vault Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+    h1 { color: #58a6ff; margin-bottom: 0.25rem; }
+    .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.9rem; }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 700px;
+      margin-bottom: 1.5rem;
+    }
+    .card h2 { color: #58a6ff; margin-bottom: 1rem; font-size: 1rem; }
+    pre {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.8rem;
+      color: #e6edf3;
+      min-height: 60px;
+    }
+    textarea {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      padding: 0.75rem;
+      font-family: monospace;
+      font-size: 0.8rem;
+      resize: vertical;
+      min-height: 160px;
+      margin-bottom: 0.75rem;
+    }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.6rem 1.2rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-right: 0.5rem;
+    }
+    button:hover { background: #2ea043; }
+    button.secondary { background: #1f6feb; }
+    button.secondary:hover { background: #388bfd; }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-left: 0.5rem;
+    }
+    .badge.ok  { background: #1a4731; color: #3fb950; }
+    .badge.err { background: #4d1f1f; color: #f85149; }
+    .badge.warn { background: #3d2f0a; color: #d29922; }
+  </style>
+</head>
+<body>
+  <h1>🔐 Linkify – Key Vault Demo</h1>
+  <p class="subtitle">A public/private RSA key-gated JSON data store</p>
+
+  <!-- Step 1: Fetch the public story -->
+  <div class="card">
+    <h2>Step 1 – Public Story <span class="badge ok">GET /api/data</span></h2>
+    <p style="margin-bottom:0.75rem;font-size:0.85rem;color:#8b949e;">
+      Any visitor can fetch this endpoint. It returns the "cover story" from <code>db.json</code>.
+    </p>
+    <button onclick="fetchStory()">Fetch story</button>
+    <pre id="story-output">Click "Fetch story" to load…</pre>
+  </div>
+
+  <!-- Step 2: Fetch the server public key -->
+  <div class="card">
+    <h2>Step 2 – Server Public Key <span class="badge ok">GET /api/public-key</span></h2>
+    <p style="margin-bottom:0.75rem;font-size:0.85rem;color:#8b949e;">
+      Retrieves the server's RSA public key. Copy it into Step 3 to prove you hold the matching private key.
+    </p>
+    <button class="secondary" onclick="fetchPublicKey()">Fetch server public key</button>
+    <pre id="pubkey-output">Click "Fetch server public key" to load…</pre>
+  </div>
+
+  <!-- Step 3: POST the public key to get the real payload -->
+  <div class="card">
+    <h2>Step 3 – Submit Public Key <span class="badge warn">POST /api/data</span></h2>
+    <p style="margin-bottom:0.75rem;font-size:0.85rem;color:#8b949e;">
+      Paste an RSA public key (PEM format) below. If it matches the server's key, you receive the
+      secret payload encrypted with your key.
+    </p>
+    <textarea id="public-key-input" placeholder="-----BEGIN RSA PUBLIC KEY-----&#10;…paste PEM here…&#10;-----END RSA PUBLIC KEY-----"></textarea>
+    <button onclick="submitKey()">Submit public key</button>
+    <button class="secondary" onclick="pasteServerKey()">Auto-fill server key (from Step 2)</button>
+    <pre id="submit-output">Response will appear here…</pre>
+  </div>
+
+  <script>
+    let _serverPublicKey = '';
+
+    async function fetchStory() {
+      const el = document.getElementById('story-output');
+      el.textContent = 'Loading…';
+      try {
+        const r = await fetch('/api/data');
+        const json = await r.json();
+        el.textContent = JSON.stringify(json, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    async function fetchPublicKey() {
+      const el = document.getElementById('pubkey-output');
+      el.textContent = 'Loading…';
+      try {
+        const r = await fetch('/api/public-key');
+        const json = await r.json();
+        _serverPublicKey = json.publicKey || '';
+        el.textContent = JSON.stringify(json, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    function pasteServerKey() {
+      if (!_serverPublicKey) {
+        alert('Fetch the server public key first (Step 2).');
+        return;
+      }
+      document.getElementById('public-key-input').value = _serverPublicKey;
+    }
+
+    async function submitKey() {
+      const el = document.getElementById('submit-output');
+      const key = document.getElementById('public-key-input').value.trim();
+      if (!key) {
+        el.textContent = 'Please paste a public key first.';
+        return;
+      }
+      el.textContent = 'Submitting…';
+      try {
+        const r = await fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publicKey: key }),
+        });
+        const json = await r.json();
+        el.textContent = JSON.stringify(json, null, 2);
+      } catch (e) {
+        el.textContent = 'Error: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "story": {
+    "title": "The Keeper of Keys",
+    "chapters": [
+      {
+        "number": 1,
+        "heading": "A Stranger Arrives",
+        "body": "In the quiet town of Arbor Creek there lived a librarian named Mara who had never once misplaced a single key. Every cabinet, every drawer, every door in the vast old building was hers to open—and hers alone."
+      },
+      {
+        "number": 2,
+        "heading": "The Request",
+        "body": "One evening a traveller appeared at the counter clutching a sealed envelope. 'I was told you keep the real records,' he said. Mara studied him carefully. 'What records?' she asked. He slid a folded piece of paper across the desk. On it was a public key."
+      },
+      {
+        "number": 3,
+        "heading": "The Verification",
+        "body": "Mara compared the key against the one etched into the locked case behind her. They matched. She turned, opened the case, and handed him an envelope. Inside were the actual records—encrypted just for him."
+      }
+    ],
+    "note": "POST your RSA public key to /api/data to receive the real payload."
+  }
+}
