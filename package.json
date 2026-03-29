@@ -1,0 +1,27 @@
+{
+  "name": "linkify",
+  "version": "1.0.0",
+  "description": "A Node.js/Express key-vault demo with RSA public/private key gating and a JSON txt-db",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "generate-keys": "node generate-keys.js",
+    "test": "node test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgwiz/linkify.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/pgwiz/linkify/issues"
+  },
+  "homepage": "https://github.com/pgwiz/linkify#readme",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1"
+  }
+}
