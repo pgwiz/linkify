@@ -80,19 +80,26 @@
     /* First-run setup card */
     #setup-card { display: none; border-color: #d29922; }
     #setup-card h2 { color: #d29922; }
+    .env-var-group { margin-bottom: 1rem; }
+    .env-var-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #8b949e;
+      margin-bottom: 0.35rem;
+    }
     .env-block {
       background: #0d1117;
       border: 1px solid #21262d;
       border-radius: 6px;
-      padding: 1rem;
+      padding: 0.75rem 1rem;
       font-family: monospace;
       font-size: 0.78rem;
       color: #e6edf3;
       white-space: pre-wrap;
       word-break: break-all;
-      margin-bottom: 0.75rem;
+      margin-bottom: 0.5rem;
     }
-    .copy-btn { background: #30363d; color: #c9d1d9; margin-bottom: 0.5rem; }
+    .copy-btn { background: #30363d; color: #c9d1d9; margin-bottom: 0.25rem; }
     .copy-btn:hover { background: #3c444d; }
     .steps { padding-left: 1.25rem; margin: 0.75rem 0; color: #8b949e; font-size: 0.85rem; line-height: 1.8; }
   </style>
@@ -112,8 +119,16 @@
     <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.5rem;">
       ⚠️ Treat <code>PRIVATE_KEY</code> as a secret — do not share it publicly.
     </p>
-    <div id="setup-env-block" class="env-block">Loading…</div>
-    <button class="copy-btn" onclick="copyEnvVars()">📋 Copy env vars</button>
+    <div id="setup-env-private" class="env-var-group">
+      <div class="env-var-label">PRIVATE_KEY &nbsp;<span style="color:#f85149;font-weight:400;">⚠ secret – do not share</span></div>
+      <div id="env-block-private" class="env-block">Loading…</div>
+      <button class="copy-btn" onclick="copyKey('private')">📋 Copy PRIVATE_KEY value</button>
+    </div>
+    <div id="setup-env-public" class="env-var-group">
+      <div class="env-var-label">PUBLIC_KEY</div>
+      <div id="env-block-public" class="env-block">Loading…</div>
+      <button class="copy-btn" onclick="copyKey('public')">📋 Copy PUBLIC_KEY value</button>
+    </div>
     <ol class="steps" id="setup-steps"></ol>
   </div>
 
@@ -152,7 +167,7 @@
 
   <script>
     let _serverPublicKey = '';
-    let _envVarText = '';
+    let _keyValues = {};
 
     // ─── First-run check ────────────────────────────────────────────────────
     (async function checkFirstRun() {
@@ -161,12 +176,14 @@
         const json = await r.json();
         if (!json.firstRun) return;
 
-        // Build the env var text the user needs to paste into Vercel
-        _envVarText =
-          `PRIVATE_KEY="${json.env.PRIVATE_KEY.replace(/\n/g, '\\n')}"\n` +
-          `PUBLIC_KEY="${json.env.PUBLIC_KEY.replace(/\n/g, '\\n')}"`;
+        // Store raw PEM values (real newlines preserved) for per-key copy
+        _keyValues = {
+          private: json.env.PRIVATE_KEY,
+          public:  json.env.PUBLIC_KEY,
+        };
 
-        document.getElementById('setup-env-block').textContent = _envVarText;
+        document.getElementById('env-block-private').textContent = json.env.PRIVATE_KEY;
+        document.getElementById('env-block-public').textContent  = json.env.PUBLIC_KEY;
 
         const stepsList = document.getElementById('setup-steps');
         (json.instructions || []).forEach((step) => {
@@ -177,30 +194,42 @@
 
         document.getElementById('setup-card').style.display = 'block';
       } catch (e) {
-        // Non-critical – silently ignore if the endpoint is unreachable
+        // Non-critical – the page works fine without the first-run panel,
+        // but log so developers can diagnose connectivity issues.
+        console.warn('[first-run check]', e.message);
       }
     })();
 
-    function copyEnvVars() {
-      if (!_envVarText) return;
-      navigator.clipboard.writeText(_envVarText).then(() => {
-        const btn = document.querySelector('.copy-btn');
-        const orig = btn.textContent;
-        btn.textContent = '✔ Copied!';
-        setTimeout(() => { btn.textContent = orig; }, 2000);
-      }).catch(() => {
-        // Clipboard API unavailable (e.g. non-HTTPS, permissions denied)
-        // Fall back to selecting the text block so the user can copy manually.
-        const block = document.getElementById('setup-env-block');
-        const range = document.createRange();
-        range.selectNodeContents(block);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        const btn = document.querySelector('.copy-btn');
-        btn.textContent = '⚠ Text selected – press Ctrl+C to copy';
-        setTimeout(() => { btn.textContent = '📋 Copy env vars'; }, 3000);
-      });
+    function copyKey(which) {
+      const val = _keyValues[which];
+      if (!val) return;
+      const btnSel = which === 'private'
+        ? 'button[onclick="copyKey(\'private\')"]'
+        : 'button[onclick="copyKey(\'public\')"]';
+      const btn = document.querySelector(btnSel);
+      const origLabel = btn.textContent;
+
+      function flash(ok) {
+        btn.textContent = ok ? '✔ Copied!' : '⚠ Select text above and press Ctrl+C';
+        setTimeout(() => { btn.textContent = origLabel; }, 2500);
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(val).then(() => flash(true)).catch(() => fallbackSelect(which, flash));
+      } else {
+        fallbackSelect(which, flash);
+      }
+    }
+
+    function fallbackSelect(which, flash) {
+      const blockId = which === 'private' ? 'env-block-private' : 'env-block-public';
+      const block = document.getElementById(blockId);
+      const range = document.createRange();
+      range.selectNodeContents(block);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      flash(false);
     }
 
     // ─── Existing API demo helpers ───────────────────────────────────────────
