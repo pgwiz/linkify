@@ -21,14 +21,23 @@ try {
   SECRET_DATA = {};
 }
 
-// Load RSA keys at startup – crash early if keys are missing so the operator
-// knows they need to run `node generate-keys.js` first.
+// Load RSA keys at startup – auto-generate them if they are missing so the
+// server works out of the box in fresh environments (e.g. CI, first deploy).
 function loadKeys() {
   if (!fs.existsSync(PRIVATE_KEY_PATH) || !fs.existsSync(PUBLIC_KEY_PATH)) {
-    console.error(
-      '❌  RSA keys not found. Run `node generate-keys.js` to create them.'
-    );
-    process.exit(1);
+    console.log('⚠️  RSA keys not found – generating a temporary key pair.');
+    console.log('   For persistent keys (recommended in production), run: node generate-keys.js');
+    const keysDir = path.dirname(PRIVATE_KEY_PATH);
+    if (!fs.existsSync(keysDir)) fs.mkdirSync(keysDir, { recursive: true });
+    const { generateKeyPairSync } = require('crypto');
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    });
+    fs.writeFileSync(PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
+    fs.writeFileSync(PUBLIC_KEY_PATH, publicKey);
+    console.log('✔  RSA key pair generated and saved to', keysDir);
   }
   return {
     privateKey: fs.readFileSync(PRIVATE_KEY_PATH, 'utf8'),
