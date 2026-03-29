@@ -77,11 +77,45 @@
     .badge.ok  { background: #1a4731; color: #3fb950; }
     .badge.err { background: #4d1f1f; color: #f85149; }
     .badge.warn { background: #3d2f0a; color: #d29922; }
+    /* First-run setup card */
+    #setup-card { display: none; border-color: #d29922; }
+    #setup-card h2 { color: #d29922; }
+    .env-block {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #e6edf3;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-bottom: 0.75rem;
+    }
+    .copy-btn { background: #30363d; color: #c9d1d9; margin-bottom: 0.5rem; }
+    .copy-btn:hover { background: #3c444d; }
+    .steps { padding-left: 1.25rem; margin: 0.75rem 0; color: #8b949e; font-size: 0.85rem; line-height: 1.8; }
   </style>
 </head>
 <body>
   <h1>🔐 Linkify – Key Vault Demo</h1>
   <p class="subtitle">A public/private RSA key-gated JSON data store</p>
+
+  <!-- First-run setup panel (hidden on normal runs) -->
+  <div class="card" id="setup-card">
+    <h2>⚙️ First-Run Setup <span class="badge warn">ACTION REQUIRED</span></h2>
+    <p style="margin-bottom:0.75rem;font-size:0.85rem;color:#8b949e;">
+      No RSA keys were pre-configured. A temporary key pair was generated for
+      this run. <strong style="color:#d29922;">Copy these environment variables into your Vercel project
+      settings now</strong> — once set and redeployed, this panel will not appear again.
+    </p>
+    <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.5rem;">
+      ⚠️ Treat <code>PRIVATE_KEY</code> as a secret — do not share it publicly.
+    </p>
+    <div id="setup-env-block" class="env-block">Loading…</div>
+    <button class="copy-btn" onclick="copyEnvVars()">📋 Copy env vars</button>
+    <ol class="steps" id="setup-steps"></ol>
+  </div>
 
   <!-- Step 1: Fetch the public story -->
   <div class="card">
@@ -118,6 +152,58 @@
 
   <script>
     let _serverPublicKey = '';
+    let _envVarText = '';
+
+    // ─── First-run check ────────────────────────────────────────────────────
+    (async function checkFirstRun() {
+      try {
+        const r = await fetch('/api/first-run');
+        const json = await r.json();
+        if (!json.firstRun) return;
+
+        // Build the env var text the user needs to paste into Vercel
+        _envVarText =
+          `PRIVATE_KEY="${json.env.PRIVATE_KEY.replace(/\n/g, '\\n')}"\n` +
+          `PUBLIC_KEY="${json.env.PUBLIC_KEY.replace(/\n/g, '\\n')}"`;
+
+        document.getElementById('setup-env-block').textContent = _envVarText;
+
+        const stepsList = document.getElementById('setup-steps');
+        (json.instructions || []).forEach((step) => {
+          const li = document.createElement('li');
+          li.textContent = step;
+          stepsList.appendChild(li);
+        });
+
+        document.getElementById('setup-card').style.display = 'block';
+      } catch (e) {
+        // Non-critical – silently ignore if the endpoint is unreachable
+      }
+    })();
+
+    function copyEnvVars() {
+      if (!_envVarText) return;
+      navigator.clipboard.writeText(_envVarText).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        const orig = btn.textContent;
+        btn.textContent = '✔ Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 2000);
+      }).catch(() => {
+        // Clipboard API unavailable (e.g. non-HTTPS, permissions denied)
+        // Fall back to selecting the text block so the user can copy manually.
+        const block = document.getElementById('setup-env-block');
+        const range = document.createRange();
+        range.selectNodeContents(block);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        const btn = document.querySelector('.copy-btn');
+        btn.textContent = '⚠ Text selected – press Ctrl+C to copy';
+        setTimeout(() => { btn.textContent = '📋 Copy env vars'; }, 3000);
+      });
+    }
+
+    // ─── Existing API demo helpers ───────────────────────────────────────────
 
     async function fetchStory() {
       const el = document.getElementById('story-output');

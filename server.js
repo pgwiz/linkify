@@ -21,28 +21,64 @@ try {
   SECRET_DATA = {};
 }
 
-// Load RSA keys at startup – auto-generate them if they are missing so the
-// server works out of the box in fresh environments (e.g. CI, first deploy).
+// ─── First-run detection ─────────────────────────────────────────────────────
+// A "first run" means no RSA keys were pre-configured anywhere: neither as
+// inline env vars (PRIVATE_KEY / PUBLIC_KEY – the Vercel-friendly approach)
+// nor as both key files on disk (local dev).  We capture this BEFORE loadKeys()
+// so the flag stays accurate even after keys are written to process.env.
+const IS_FIRST_RUN =
+  !process.env.PRIVATE_KEY &&
+  !process.env.PUBLIC_KEY &&
+  !(fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH));
+
+// ─── Key loading ─────────────────────────────────────────────────────────────
+// Priority:
+//   1. PRIVATE_KEY / PUBLIC_KEY env vars (PEM content) – Vercel / any 12-factor env
+//   2. Key files on disk – local dev after running `node generate-keys.js`
+//   3. Auto-generate in-memory and store in process.env for this run.
+//      Also attempt to persist to disk so local dev keeps the keys across
+//      restarts; silently skips the write on read-only filesystems (Vercel).
 function loadKeys() {
-  if (!fs.existsSync(PRIVATE_KEY_PATH) || !fs.existsSync(PUBLIC_KEY_PATH)) {
-    console.log('⚠️  RSA keys not found – generating a temporary key pair.');
-    console.log('   For persistent keys (recommended in production), run: node generate-keys.js');
+  if (process.env.PRIVATE_KEY && process.env.PUBLIC_KEY) {
+    return {
+      privateKey: process.env.PRIVATE_KEY,
+      publicKey: process.env.PUBLIC_KEY,
+    };
+  }
+
+  if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
+    return {
+      privateKey: fs.readFileSync(PRIVATE_KEY_PATH, 'utf8'),
+      publicKey: fs.readFileSync(PUBLIC_KEY_PATH, 'utf8'),
+    };
+  }
+
+  // No keys anywhere – generate a fresh pair for this process lifetime.
+  console.log('⚠️  RSA keys not found – generating a temporary key pair.');
+  console.log('   On Vercel: set PRIVATE_KEY and PUBLIC_KEY environment variables to persist them.');
+
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  });
+
+  // Store in process.env so every part of this process uses the same keys.
+  process.env.PRIVATE_KEY = privateKey;
+  process.env.PUBLIC_KEY = publicKey;
+
+  // Best-effort disk persistence (works locally, silently skipped on Vercel).
+  try {
     const keysDir = path.dirname(PRIVATE_KEY_PATH);
     if (!fs.existsSync(keysDir)) fs.mkdirSync(keysDir, { recursive: true });
-    const { generateKeyPairSync } = require('crypto');
-    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
-    });
     fs.writeFileSync(PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
-    fs.writeFileSync(PUBLIC_KEY_PATH, publicKey);
-    console.log('✔  RSA key pair generated and saved to', keysDir);
+    fs.writeFileSync(PUBLIC_KEY_PATH, publicKey, { mode: 0o644 });
+    console.log('✔  RSA key pair also saved to', keysDir);
+  } catch {
+    console.log('   (filesystem is read-only – keys are in-memory only for this run)');
   }
-  return {
-    privateKey: fs.readFileSync(PRIVATE_KEY_PATH, 'utf8'),
-    publicKey: fs.readFileSync(PUBLIC_KEY_PATH, 'utf8'),
-  };
+
+  return { privateKey, publicKey };
 }
 
 const { privateKey: SERVER_PRIVATE_KEY, publicKey: SERVER_PUBLIC_KEY } = loadKeys();
@@ -76,6 +112,40 @@ app.get('/api/data', (_req, res) => {
  */
 app.get('/api/public-key', (_req, res) => {
   res.json({ ok: true, publicKey: SERVER_PUBLIC_KEY });
+});
+
+/**
+ * GET /api/first-run
+ * Returns whether this is the first run (no pre-configured RSA keys found at
+ * startup).  On a first run the generated key values are included ONCE so the
+ * operator can copy them into Vercel (or another 12-factor host) as
+ * environment variables, making subsequent runs stable and key-consistent.
+ *
+ * The private key is returned only on the very first request to this endpoint
+ * (per process lifetime) to minimise the exposure window.
+ */
+let firstRunServed = false;
+app.get('/api/first-run', (_req, res) => {
+  if (!IS_FIRST_RUN || firstRunServed) {
+    return res.json({ firstRun: false });
+  }
+
+  firstRunServed = true;
+  return res.json({
+    firstRun: true,
+    message:
+      'RSA keys were auto-generated for this run. ' +
+      'Set the environment variables below in your Vercel project to persist them.',
+    env: {
+      PRIVATE_KEY: SERVER_PRIVATE_KEY,
+      PUBLIC_KEY: SERVER_PUBLIC_KEY,
+    },
+    instructions: [
+      '1. Copy PRIVATE_KEY and PUBLIC_KEY from this response.',
+      '2. In Vercel → Project Settings → Environment Variables, add both variables.',
+      '3. Redeploy. This setup panel will not appear again once the variables are set.',
+    ],
+  });
 });
 
 /**
