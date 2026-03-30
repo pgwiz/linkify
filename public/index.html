@@ -77,11 +77,108 @@
     .badge.ok  { background: #1a4731; color: #3fb950; }
     .badge.err { background: #4d1f1f; color: #f85149; }
     .badge.warn { background: #3d2f0a; color: #d29922; }
+    /* Key mismatch warning banner */
+    #key-warning {
+      display: none;
+      width: 100%;
+      max-width: 700px;
+      margin-bottom: 1.5rem;
+      background: #2d1317;
+      border: 1.5px solid #f85149;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+    }
+    #key-warning h2 { color: #f85149; margin-bottom: 0.5rem; font-size: 1rem; }
+    #key-warning p  { color: #e6edf3; font-size: 0.85rem; line-height: 1.6; }
+    #key-warning code {
+      background: #0d1117;
+      border-radius: 4px;
+      padding: 0.1em 0.4em;
+      font-size: 0.8rem;
+      color: #ff7b72;
+    }
+    #key-warning-detail {
+      margin-top: 0.75rem;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #f85149;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    /* First-run setup card */
+    #setup-card { display: none; border-color: #d29922; }
+    #setup-card h2 { color: #d29922; }
+    .env-var-group { margin-bottom: 1rem; }
+    .env-var-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #8b949e;
+      margin-bottom: 0.35rem;
+    }
+    .env-block {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #e6edf3;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-bottom: 0.5rem;
+    }
+    .copy-btn { background: #30363d; color: #c9d1d9; margin-bottom: 0.25rem; }
+    .copy-btn:hover { background: #3c444d; }
+    .steps { padding-left: 1.25rem; margin: 0.75rem 0; color: #8b949e; font-size: 0.85rem; line-height: 1.8; }
   </style>
 </head>
 <body>
   <h1>🔐 Linkify – Key Vault Demo</h1>
   <p class="subtitle">A public/private RSA key-gated JSON data store</p>
+
+  <!-- Key mismatch / invalid key warning (hidden when keys are fine) -->
+  <div id="key-warning">
+    <h2>⚠️ RSA Key Configuration Error <span class="badge err">MISMATCH</span></h2>
+    <p>
+      The server's <code>PRIVATE_KEY</code> and <code>PUBLIC_KEY</code> are
+      <strong>not a matched pair</strong> (or one of them has invalid PEM syntax).
+      The key-gated endpoints will not work correctly until this is fixed.
+    </p>
+    <p style="margin-top:0.5rem;">
+      Run <code>node generate-keys.js</code> to generate a fresh matched pair, then
+      update <code>PRIVATE_KEY</code> and <code>PUBLIC_KEY</code> in your environment
+      and redeploy.
+    </p>
+    <div id="key-warning-detail"></div>
+  </div>
+
+  <!-- First-run setup panel (hidden on normal runs) -->
+  <div class="card" id="setup-card">
+    <h2>⚙️ First-Run Setup <span class="badge warn">ACTION REQUIRED</span></h2>
+    <p style="margin-bottom:0.75rem;font-size:0.85rem;color:#8b949e;">
+      No RSA keys were pre-configured. A temporary key pair was generated for
+      this run. <strong style="color:#d29922;">Copy these environment variables into your Vercel project
+      settings now</strong> — once set and redeployed, this panel will not appear again.
+    </p>
+    <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.5rem;">
+      ⚠️ Treat <code>PRIVATE_KEY</code> as a secret — do not share it publicly.
+    </p>
+    <div id="setup-env-private" class="env-var-group">
+      <div class="env-var-label">PRIVATE_KEY &nbsp;<span style="color:#f85149;font-weight:400;">⚠ secret – do not share</span></div>
+      <div id="env-block-private" class="env-block">Loading…</div>
+      <button class="copy-btn" onclick="copyKey('private')">📋 Copy PRIVATE_KEY value</button>
+    </div>
+    <div id="setup-env-public" class="env-var-group">
+      <div class="env-var-label">PUBLIC_KEY</div>
+      <div id="env-block-public" class="env-block">Loading…</div>
+      <button class="copy-btn" onclick="copyKey('public')">📋 Copy PUBLIC_KEY value</button>
+    </div>
+    <ol class="steps" id="setup-steps"></ol>
+  </div>
 
   <!-- Step 1: Fetch the public story -->
   <div class="card">
@@ -118,6 +215,86 @@
 
   <script>
     let _serverPublicKey = '';
+    let _keyValues = {};
+
+    // ─── Key-status check ───────────────────────────────────────────────────
+    (async function checkKeyStatus() {
+      try {
+        const r = await fetch('/api/key-status');
+        const json = await r.json();
+        if (json.ok) return;                          // keys are fine – nothing to show
+        const warning = document.getElementById('key-warning');
+        document.getElementById('key-warning-detail').textContent = json.error || 'Unknown error.';
+        warning.style.display = 'block';
+      } catch (e) {
+        console.warn('[key-status check]', e.message);
+      }
+    })();
+
+    // ─── First-run check ────────────────────────────────────────────────────
+    (async function checkFirstRun() {
+      try {
+        const r = await fetch('/api/first-run');
+        const json = await r.json();
+        if (!json.firstRun) return;
+
+        // Store raw PEM values (real newlines preserved) for per-key copy
+        _keyValues = {
+          private: json.env.PRIVATE_KEY,
+          public:  json.env.PUBLIC_KEY,
+        };
+
+        document.getElementById('env-block-private').textContent = json.env.PRIVATE_KEY;
+        document.getElementById('env-block-public').textContent  = json.env.PUBLIC_KEY;
+
+        const stepsList = document.getElementById('setup-steps');
+        (json.instructions || []).forEach((step) => {
+          const li = document.createElement('li');
+          li.textContent = step;
+          stepsList.appendChild(li);
+        });
+
+        document.getElementById('setup-card').style.display = 'block';
+      } catch (e) {
+        // Non-critical – the page works fine without the first-run panel,
+        // but log so developers can diagnose connectivity issues.
+        console.warn('[first-run check]', e.message);
+      }
+    })();
+
+    function copyKey(which) {
+      const val = _keyValues[which];
+      if (!val) return;
+      const btnSel = which === 'private'
+        ? 'button[onclick="copyKey(\'private\')"]'
+        : 'button[onclick="copyKey(\'public\')"]';
+      const btn = document.querySelector(btnSel);
+      const origLabel = btn.textContent;
+
+      function flash(ok) {
+        btn.textContent = ok ? '✔ Copied!' : '⚠ Select text above and press Ctrl+C';
+        setTimeout(() => { btn.textContent = origLabel; }, 2500);
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(val).then(() => flash(true)).catch(() => fallbackSelect(which, flash));
+      } else {
+        fallbackSelect(which, flash);
+      }
+    }
+
+    function fallbackSelect(which, flash) {
+      const blockId = which === 'private' ? 'env-block-private' : 'env-block-public';
+      const block = document.getElementById(blockId);
+      const range = document.createRange();
+      range.selectNodeContents(block);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      flash(false);
+    }
+
+    // ─── Existing API demo helpers ───────────────────────────────────────────
 
     async function fetchStory() {
       const el = document.getElementById('story-output');
