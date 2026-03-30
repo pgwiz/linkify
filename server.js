@@ -7,6 +7,36 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// ─── Startup env diagnostics ──────────────────────────────────────────────────
+// Print all environment variable NAMES so operators can confirm which vars have
+// been injected, then show safe diagnostics for the two critical key vars.
+(function logEnvDiagnostics() {
+  const allKeys = Object.keys(process.env).sort();
+  console.log(`\n📋  Environment variables present at startup (${allKeys.length} total):`);
+  console.log('   ', allKeys.join(', '));
+
+  const keyVars = ['PRIVATE_KEY', 'PUBLIC_KEY'];
+  console.log('\n🔍  Key-variable diagnostics:');
+  for (const name of keyVars) {
+    const val = process.env[name];
+    if (!val) {
+      console.log(`   ${name}: ❌  NOT SET (undefined or empty)`);
+      continue;
+    }
+    const byteLen = Buffer.byteLength(val, 'utf8');
+    const firstLine = val.split('\n')[0].trim();
+    const lastLine = val.trimEnd().split('\n').pop().trim();
+    const looksLikePem =
+      firstLine.startsWith('-----BEGIN') && lastLine.startsWith('-----END');
+    console.log(`   ${name}: ✅  SET`);
+    console.log(`            length  : ${byteLen} bytes`);
+    console.log(`            firstLine: "${firstLine}"`);
+    console.log(`            lastLine : "${lastLine}"`);
+    console.log(`            PEM shape: ${looksLikePem ? '✅  looks valid' : '❌  DOES NOT look like a PEM block – check for missing newlines'}`);
+  }
+  console.log('');
+})();
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
@@ -39,14 +69,24 @@ const IS_FIRST_RUN =
 //      Also attempt to persist to disk so local dev keeps the keys across
 //      restarts; silently skips the write on read-only filesystems (Vercel).
 function loadKeys() {
-  if (process.env.PRIVATE_KEY && process.env.PUBLIC_KEY) {
+  const hasEnvPrivate = !!(process.env.PRIVATE_KEY);
+  const hasEnvPublic  = !!(process.env.PUBLIC_KEY);
+  console.log(`🔑  loadKeys() – PRIVATE_KEY in env: ${hasEnvPrivate}, PUBLIC_KEY in env: ${hasEnvPublic}`);
+
+  if (hasEnvPrivate && hasEnvPublic) {
+    console.log('🔑  loadKeys() → using PRIVATE_KEY / PUBLIC_KEY from environment variables.');
     return {
       privateKey: process.env.PRIVATE_KEY,
       publicKey: process.env.PUBLIC_KEY,
     };
   }
 
-  if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
+  const diskPrivateExists = fs.existsSync(PRIVATE_KEY_PATH);
+  const diskPublicExists  = fs.existsSync(PUBLIC_KEY_PATH);
+  console.log(`🔑  loadKeys() – disk check: ${PRIVATE_KEY_PATH} exists=${diskPrivateExists}, ${PUBLIC_KEY_PATH} exists=${diskPublicExists}`);
+
+  if (diskPrivateExists && diskPublicExists) {
+    console.log('🔑  loadKeys() → loading keys from disk files.');
     return {
       privateKey: fs.readFileSync(PRIVATE_KEY_PATH, 'utf8'),
       publicKey: fs.readFileSync(PUBLIC_KEY_PATH, 'utf8'),
