@@ -49,13 +49,8 @@ const PORT = process.env.PORT || 3000;
 const PRIVATE_KEY_PATH = path.resolve(__dirname, process.env.PRIVATE_KEY_PATH || 'keys/private.pem');
 const PUBLIC_KEY_PATH = path.resolve(__dirname, process.env.PUBLIC_KEY_PATH || 'keys/public.pem');
 
-// The real secret payload lives only in env (never served as-is to the public)
-let SECRET_DATA;
-try {
-  SECRET_DATA = JSON.parse(process.env.SECRET_DATA || '{}');
-} catch {
-  SECRET_DATA = {};
-}
+// Env vars that must never be included in the encrypted payload.
+const SECRET_ENV_EXCLUDES = new Set(['PRIVATE_KEY', 'PUBLIC_KEY']);
 
 // ─── First-run detection ─────────────────────────────────────────────────────
 // A "first run" means no RSA keys were pre-configured anywhere: neither as
@@ -279,9 +274,9 @@ app.get('/api/first-run', (_req, res) => {
  * Behaviour:
  *   1. Validate the submitted public key by comparing its fingerprint against
  *      the server's own public key fingerprint.
- *   2. If it matches, the SECRET_DATA payload is encrypted with the submitted
- *      public key (so only the holder of the matching private key can decrypt
- *      it) and returned as base64.
+ *   2. If it matches, all environment variables (except PRIVATE_KEY and
+ *      PUBLIC_KEY) are serialised and encrypted with the submitted public key
+ *      so only the holder of the matching private key can decrypt them.
  *   3. If it does not match, a 403 is returned with the story data (same as
  *      the public GET endpoint).
  */
@@ -318,19 +313,37 @@ app.post('/api/data', (req, res) => {
     });
   }
 
-  // Key matches – encrypt the secret payload with the submitted public key
-  // so only the holder of the matching private key can decrypt it.
-  const plaintext = JSON.stringify(SECRET_DATA);
-  const encrypted = crypto.publicEncrypt(
+  // Key matches – hybrid-encrypt all env vars (minus key material):
+  //   1. Random AES-256-GCM key encrypts the (arbitrarily large) payload.
+  //   2. RSA-OAEP encrypts the small AES key so only the private-key holder
+  //      can unwrap it.
+  const envPayload = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !SECRET_ENV_EXCLUDES.has(k))
+  );
+  const plaintext = JSON.stringify(envPayload);
+
+  const aesKey = crypto.randomBytes(32);          // 256-bit AES key
+  const iv     = crypto.randomBytes(12);          // 96-bit IV for GCM
+  const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(Buffer.from(plaintext, 'utf8')),
+    cipher.final(),
+  ]);
+  const authTag = cipher.getAuthTag();             // 16-byte GCM auth tag
+
+  const encryptedKey = crypto.publicEncrypt(
     { key: submittedKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING },
-    Buffer.from(plaintext, 'utf8')
+    aesKey
   );
 
   return res.json({
     ok: true,
-    message: 'Key verified. Secret payload encrypted with your public key.',
-    encrypted: encrypted.toString('base64'),
-    hint: 'Decrypt with: crypto.privateDecrypt({ key: yourPrivateKey, padding: RSA_PKCS1_OAEP_PADDING }, Buffer.from(encrypted, "base64"))',
+    message: 'Key verified. Payload encrypted with hybrid RSA-OAEP + AES-256-GCM.',
+    encryptedKey: encryptedKey.toString('base64'),
+    iv:           iv.toString('base64'),
+    ciphertext:   ciphertext.toString('base64'),
+    authTag:      authTag.toString('base64'),
+    hint: 'Decrypt: RSA-OAEP-unwrap(encryptedKey) → AES-256-GCM-decrypt(ciphertext, iv, authTag)',
   });
 });
 

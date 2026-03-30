@@ -18,6 +18,7 @@ import sys
 import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 # Override with the LINKIFY_SERVER environment variable for local dev or staging.
@@ -89,19 +90,27 @@ if not body.get("ok"):
     print("Server error:", body)
     sys.exit(1)
 
-# ── 5. Decrypt the payload ────────────────────────────────────────────────────
-ciphertext = base64.b64decode(body["encrypted"])
-
-plaintext = private_key.decrypt(
-    ciphertext,
-    # SHA-1 is required here: Node.js crypto.publicEncrypt with
-    # RSA_PKCS1_OAEP_PADDING defaults to SHA-1 for both the hash and MGF1.
+# ── 5. Decrypt the payload (hybrid RSA-OAEP + AES-256-GCM) ──────────────────
+# Step 1: RSA-OAEP-unwrap the AES key
+encrypted_key = base64.b64decode(body["encryptedKey"])
+aes_key = private_key.decrypt(
+    encrypted_key,
+    # Node.js RSA_PKCS1_OAEP_PADDING defaults to SHA-1 for hash and MGF1.
     padding.OAEP(
         mgf=padding.MGF1(algorithm=hashes.SHA1()),
         algorithm=hashes.SHA1(),
         label=None,
     ),
 )
+
+# Step 2: AES-256-GCM decrypt the payload
+iv         = base64.b64decode(body["iv"])
+ciphertext = base64.b64decode(body["ciphertext"])
+auth_tag   = base64.b64decode(body["authTag"])
+
+# The `cryptography` AESGCM API expects ciphertext || authTag concatenated.
+aesgcm   = AESGCM(aes_key)
+plaintext = aesgcm.decrypt(iv, ciphertext + auth_tag, None)
 
 result = json.loads(plaintext.decode("utf-8"))
 print("\n✔  Secret payload decrypted successfully:\n")
