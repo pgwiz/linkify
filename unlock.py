@@ -10,6 +10,7 @@ Requirements (install once):
 """
 
 import base64
+import hashlib
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ import sys
 import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 # Override with the LINKIFY_SERVER environment variable for local dev or staging.
 SERVER = os.environ.get("LINKIFY_SERVER", "https://linkify-ten-sable.vercel.app")
@@ -36,7 +38,39 @@ public_key_pem = private_key.public_key().public_bytes(
     format=serialization.PublicFormat.PKCS1,
 ).decode()
 
-# ── 3. POST to /api/data ──────────────────────────────────────────────────────
+# ── 3. Compare fingerprints against the server before posting ─────────────────
+def _fingerprint(pem: str) -> str:
+    """SHA-256 of the PKCS1 DER form of an RSA public key."""
+    key = load_pem_public_key(pem.encode())
+    der = key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.PKCS1,
+    )
+    return hashlib.sha256(der).hexdigest()
+
+print(f"GET  {SERVER}/api/public-key  …")
+try:
+    pk_resp = requests.get(f"{SERVER}/api/public-key", timeout=20)
+    pk_resp.raise_for_status()
+    server_pub_pem = pk_resp.json()["publicKey"]
+except Exception as exc:
+    sys.exit(f"ERROR fetching server public key: {exc}")
+
+server_fp = _fingerprint(server_pub_pem)
+local_fp  = _fingerprint(public_key_pem)
+
+if local_fp != server_fp:
+    print("\nKey mismatch — your local key pair does not match the server.")
+    print("To fix:")
+    print("  1. Run:  node generate-keys.js")
+    print(f"  2. Set the PUBLIC_KEY environment variable on the server to the")
+    print(f"     contents of keys/public.pem, then redeploy.")
+    print(f"  3. Copy keys/private.pem → private_rsa.key and retry.")
+    print(f"\n  Local  fingerprint: {local_fp}")
+    print(f"  Server fingerprint: {server_fp}")
+    sys.exit(1)
+
+# ── 4. POST to /api/data ──────────────────────────────────────────────────────
 print(f"POST {SERVER}/api/data  …")
 resp = requests.post(
     f"{SERVER}/api/data",
@@ -47,18 +81,15 @@ resp = requests.post(
 body = resp.json()
 
 if resp.status_code == 403:
-    print("\nServer says: Public key does not match.")
-    print("The private_rsa.key you have does NOT correspond to the key Vercel was")
-    print("configured with.  Retrieve the correct private key from Vercel first.")
-    print("\nServer also returned the public story:")
-    print(json.dumps(body.get("data"), indent=2))
+    print("\nServer rejected the key (unexpected after fingerprint check passed).")
+    print("Server returned:", json.dumps(body.get("data"), indent=2))
     sys.exit(1)
 
 if not body.get("ok"):
     print("Server error:", body)
     sys.exit(1)
 
-# ── 4. Decrypt the payload ────────────────────────────────────────────────────
+# ── 5. Decrypt the payload ────────────────────────────────────────────────────
 ciphertext = base64.b64decode(body["encrypted"])
 
 plaintext = private_key.decrypt(
