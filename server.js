@@ -83,6 +83,55 @@ function loadKeys() {
 
 const { privateKey: SERVER_PRIVATE_KEY, publicKey: SERVER_PUBLIC_KEY } = loadKeys();
 
+// ─── Startup key validation ───────────────────────────────────────────────────
+// 1. Verify the public key PEM is syntactically valid.
+// 2. Derive the public key from the private key and compare fingerprints to
+//    confirm the two keys form a matched pair.  If either check fails the
+//    process exits immediately with a clear diagnostic message.
+function validateKeys(privateKeyPem, publicKeyPem) {
+  // ── Syntax check ────────────────────────────────────────────────────────────
+  let pubKeyObj;
+  try {
+    pubKeyObj = crypto.createPublicKey(publicKeyPem);
+  } catch (err) {
+    console.error('❌  FATAL: PUBLIC_KEY / public.pem has invalid syntax:', err.message);
+    process.exit(1);
+  }
+
+  let privKeyObj;
+  try {
+    privKeyObj = crypto.createPrivateKey(privateKeyPem);
+  } catch (err) {
+    console.error('❌  FATAL: PRIVATE_KEY / private.pem has invalid syntax:', err.message);
+    process.exit(1);
+  }
+
+  // ── Pair check ───────────────────────────────────────────────────────────────
+  // Derive the public key from the private key and compare DER fingerprints.
+  const derivedPubObj = crypto.createPublicKey(privKeyObj);
+
+  function fingerprint(keyObj) {
+    const der = keyObj.export({ type: 'pkcs1', format: 'der' });
+    return crypto.createHash('sha256').update(der).digest('hex');
+  }
+
+  const storedFP  = fingerprint(pubKeyObj);
+  const derivedFP = fingerprint(derivedPubObj);
+
+  if (storedFP !== derivedFP) {
+    console.error('❌  FATAL: Private key and public key are NOT a matched pair.');
+    console.error('   Stored  public-key fingerprint:', storedFP);
+    console.error('   Derived public-key fingerprint:', derivedFP);
+    console.error('   Run `node generate-keys.js` to regenerate a matching pair,');
+    console.error('   then update PRIVATE_KEY and PUBLIC_KEY in your environment.');
+    process.exit(1);
+  }
+
+  return { fingerprint: storedFP };
+}
+
+const { fingerprint: KEY_FINGERPRINT } = validateKeys(SERVER_PRIVATE_KEY, SERVER_PUBLIC_KEY);
+
 // ─── Database (txt/json file) ─────────────────────────────────────────────────
 
 const DB_PATH = path.join(__dirname, 'db.json');
@@ -217,6 +266,8 @@ app.listen(PORT, () => {
   console.log(`    GET  /api/data        – public story`);
   console.log(`    GET  /api/public-key  – server RSA public key`);
   console.log(`    POST /api/data        – submit your public key to get the real payload`);
+  console.log(`\n🔑  Server public key (fingerprint: ${KEY_FINGERPRINT}):`);
+  console.log(SERVER_PUBLIC_KEY.trimEnd());
 });
 
 module.exports = app;
