@@ -18,9 +18,15 @@ const path = require('path');
   const keyVars = ['PRIVATE_KEY', 'PUBLIC_KEY'];
   console.log('\n🔍  Key-variable diagnostics:');
   for (const name of keyVars) {
-    const val = process.env[name];
+    const defined = name in process.env;          // key exists (even if empty)
+    const val     = process.env[name] || '';
+
+    if (!defined) {
+      console.log(`   ${name}: ❌  NOT DEFINED (variable not injected at all – add it in Vercel → Project Settings → Environment Variables)`);
+      continue;
+    }
     if (!val) {
-      console.log(`   ${name}: ❌  NOT SET (undefined or empty)`);
+      console.log(`   ${name}: ❌  DEFINED BUT EMPTY (variable exists with blank value – paste the actual PEM content into Vercel)`);
       continue;
     }
     const byteLen = Buffer.byteLength(val, 'utf8');
@@ -72,6 +78,17 @@ function loadKeys() {
   const hasEnvPrivate = !!(process.env.PRIVATE_KEY);
   const hasEnvPublic  = !!(process.env.PUBLIC_KEY);
   console.log(`🔑  loadKeys() – PRIVATE_KEY in env: ${hasEnvPrivate}, PUBLIC_KEY in env: ${hasEnvPublic}`);
+
+  // Partial configuration: one key present, the other missing/empty.
+  if (hasEnvPrivate !== hasEnvPublic) {
+    const missing = hasEnvPrivate ? 'PUBLIC_KEY' : 'PRIVATE_KEY';
+    const present = hasEnvPrivate ? 'PRIVATE_KEY' : 'PUBLIC_KEY';
+    console.error(
+      `⚠️  PARTIAL KEY CONFIG: ${present} is set but ${missing} is missing or empty. ` +
+      `Both PRIVATE_KEY and PUBLIC_KEY must be set in Vercel → Project Settings → Environment Variables. ` +
+      `A fresh matched pair from: GET /api/first-run (local dev) or run \`node generate-keys.js\`.`
+    );
+  }
 
   if (hasEnvPrivate && hasEnvPublic) {
     console.log('🔑  loadKeys() → using PRIVATE_KEY / PUBLIC_KEY from environment variables.');
