@@ -77,6 +77,38 @@
     .badge.ok  { background: #1a4731; color: #3fb950; }
     .badge.err { background: #4d1f1f; color: #f85149; }
     .badge.warn { background: #3d2f0a; color: #d29922; }
+    /* Key mismatch warning banner */
+    #key-warning {
+      display: none;
+      width: 100%;
+      max-width: 700px;
+      margin-bottom: 1.5rem;
+      background: #2d1317;
+      border: 1.5px solid #f85149;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+    }
+    #key-warning h2 { color: #f85149; margin-bottom: 0.5rem; font-size: 1rem; }
+    #key-warning p  { color: #e6edf3; font-size: 0.85rem; line-height: 1.6; }
+    #key-warning code {
+      background: #0d1117;
+      border-radius: 4px;
+      padding: 0.1em 0.4em;
+      font-size: 0.8rem;
+      color: #ff7b72;
+    }
+    #key-warning-detail {
+      margin-top: 0.75rem;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #f85149;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     /* First-run setup card */
     #setup-card { display: none; border-color: #d29922; }
     #setup-card h2 { color: #d29922; }
@@ -107,6 +139,22 @@
 <body>
   <h1>🔐 Linkify – Key Vault Demo</h1>
   <p class="subtitle">A public/private RSA key-gated JSON data store</p>
+
+  <!-- Key mismatch / invalid key warning (hidden when keys are fine) -->
+  <div id="key-warning">
+    <h2>⚠️ RSA Key Configuration Error <span class="badge err">MISMATCH</span></h2>
+    <p>
+      The server's <code>PRIVATE_KEY</code> and <code>PUBLIC_KEY</code> are
+      <strong>not a matched pair</strong> (or one of them has invalid PEM syntax).
+      The key-gated endpoints will not work correctly until this is fixed.
+    </p>
+    <p style="margin-top:0.5rem;">
+      Run <code>node generate-keys.js</code> to generate a fresh matched pair, then
+      update <code>PRIVATE_KEY</code> and <code>PUBLIC_KEY</code> in your environment
+      and redeploy.
+    </p>
+    <div id="key-warning-detail"></div>
+  </div>
 
   <!-- First-run setup panel (hidden on normal runs) -->
   <div class="card" id="setup-card">
@@ -168,6 +216,20 @@
   <script>
     let _serverPublicKey = '';
     let _keyValues = {};
+
+    // ─── Key-status check ───────────────────────────────────────────────────
+    (async function checkKeyStatus() {
+      try {
+        const r = await fetch('/api/key-status');
+        const json = await r.json();
+        if (json.ok) return;                          // keys are fine – nothing to show
+        const warning = document.getElementById('key-warning');
+        document.getElementById('key-warning-detail').textContent = json.error || 'Unknown error.';
+        warning.style.display = 'block';
+      } catch (e) {
+        console.warn('[key-status check]', e.message);
+      }
+    })();
 
     // ─── First-run check ────────────────────────────────────────────────────
     (async function checkFirstRun() {

@@ -86,24 +86,28 @@ const { privateKey: SERVER_PRIVATE_KEY, publicKey: SERVER_PUBLIC_KEY } = loadKey
 // ─── Startup key validation ───────────────────────────────────────────────────
 // 1. Verify the public key PEM is syntactically valid.
 // 2. Derive the public key from the private key and compare fingerprints to
-//    confirm the two keys form a matched pair.  If either check fails the
-//    process exits immediately with a clear diagnostic message.
+//    confirm the two keys form a matched pair.
+// Returns { ok: true, fingerprint } on success or { ok: false, error } on failure.
+// Never throws or exits – the result is exposed via GET /api/key-status so the
+// frontend can surface a clear mismatch warning to operators.
 function validateKeys(privateKeyPem, publicKeyPem) {
   // ── Syntax check ────────────────────────────────────────────────────────────
   let pubKeyObj;
   try {
     pubKeyObj = crypto.createPublicKey(publicKeyPem);
   } catch (err) {
-    console.error('❌  FATAL: PUBLIC_KEY / public.pem has invalid syntax:', err.message);
-    process.exit(1);
+    const msg = 'PUBLIC_KEY has invalid PEM syntax: ' + err.message;
+    console.error('❌ ', msg);
+    return { ok: false, error: msg };
   }
 
   let privKeyObj;
   try {
     privKeyObj = crypto.createPrivateKey(privateKeyPem);
   } catch (err) {
-    console.error('❌  FATAL: PRIVATE_KEY / private.pem has invalid syntax:', err.message);
-    process.exit(1);
+    const msg = 'PRIVATE_KEY has invalid PEM syntax: ' + err.message;
+    console.error('❌ ', msg);
+    return { ok: false, error: msg };
   }
 
   // ── Pair check ───────────────────────────────────────────────────────────────
@@ -119,18 +123,20 @@ function validateKeys(privateKeyPem, publicKeyPem) {
   const derivedFP = fingerprint(derivedPubObj);
 
   if (storedFP !== derivedFP) {
-    console.error('❌  FATAL: Private key and public key are NOT a matched pair.');
-    console.error('   Stored  public-key fingerprint:', storedFP);
-    console.error('   Derived public-key fingerprint:', derivedFP);
-    console.error('   Run `node generate-keys.js` to regenerate a matching pair,');
-    console.error('   then update PRIVATE_KEY and PUBLIC_KEY in your environment.');
-    process.exit(1);
+    const msg =
+      'Private key and public key are NOT a matched pair. ' +
+      `Stored fingerprint: ${storedFP} — Derived fingerprint: ${derivedFP}. ` +
+      'Run `node generate-keys.js` to regenerate a matching pair, ' +
+      'then update PRIVATE_KEY and PUBLIC_KEY in your environment.';
+    console.error('❌ ', msg);
+    return { ok: false, error: msg };
   }
 
-  return { fingerprint: storedFP };
+  return { ok: true, fingerprint: storedFP };
 }
 
-const { fingerprint: KEY_FINGERPRINT } = validateKeys(SERVER_PRIVATE_KEY, SERVER_PUBLIC_KEY);
+const KEY_STATUS = validateKeys(SERVER_PRIVATE_KEY, SERVER_PUBLIC_KEY);
+const KEY_FINGERPRINT = KEY_STATUS.ok ? KEY_STATUS.fingerprint : null;
 
 // ─── Database (txt/json file) ─────────────────────────────────────────────────
 
@@ -164,7 +170,19 @@ app.get('/api/public-key', (_req, res) => {
 });
 
 /**
- * GET /api/first-run
+ * GET /api/key-status
+ * Returns whether the server's RSA key pair is valid and matched.
+ * Used by the frontend to surface a configuration warning to operators.
+ * Never exposes key material.
+ */
+app.get('/api/key-status', (_req, res) => {
+  if (KEY_STATUS.ok) {
+    return res.json({ ok: true, fingerprint: KEY_FINGERPRINT });
+  }
+  return res.status(500).json({ ok: false, error: KEY_STATUS.error });
+});
+
+/**
  * Returns whether this is the first run (no pre-configured RSA keys found at
  * startup).  On a first run the generated key values are included ONCE so the
  * operator can copy them into Vercel (or another 12-factor host) as
@@ -265,9 +283,14 @@ app.listen(PORT, () => {
   console.log(`🔐  Linkify server running on http://localhost:${PORT}`);
   console.log(`    GET  /api/data        – public story`);
   console.log(`    GET  /api/public-key  – server RSA public key`);
+  console.log(`    GET  /api/key-status  – key pair validation status`);
   console.log(`    POST /api/data        – submit your public key to get the real payload`);
-  console.log(`\n🔑  Server public key (fingerprint: ${KEY_FINGERPRINT}):`);
-  console.log(SERVER_PUBLIC_KEY.trimEnd());
+  if (KEY_STATUS.ok) {
+    console.log(`\n🔑  Server public key (fingerprint: ${KEY_FINGERPRINT}):`);
+    console.log(SERVER_PUBLIC_KEY.trimEnd());
+  } else {
+    console.error(`\n⚠️  Key pair is INVALID – see /api/key-status for details.`);
+  }
 });
 
 module.exports = app;
